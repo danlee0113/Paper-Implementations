@@ -18,7 +18,7 @@ blur_dir = Path(os.getenv("BLUR_PATH"))
 
 for i in range(1,92):
     image_path = y_dir / f"image_{i}.png"
-    image = cv2.imread(str(image_path))
+    image = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
     if image is None:
         print(f"Failed to load: {image_path}")
         continue
