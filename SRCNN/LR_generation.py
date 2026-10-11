@@ -25,9 +25,9 @@ for i in range(1,92) :
     h,w = blur_image.shape
     h = (h // 3) * 3 # h,w 모두 3의 배수로 맞추기 (upsampling 후에도 크기가 맞도록)
     w = (w // 3) * 3
-    blur_image=blur_image[:h,:w]
-    lr_image = blur_image[::3,::3]
-    print(f"Original shape : {blur_image.shape} , Downsampled shape : {lr_image.shape}\n")
+    blur_image_cut=blur_image[:h,:w]
+    lr_image = blur_image_cut[::3,::3]
+    print(f"Original shape : {blur_image_cut.shape} , Downsampled shape : {lr_image.shape}\n")
     save_path = lr_dir / f"image{i}.png"
     cv2.imwrite(str(save_path),lr_image)
 print("Downsampling is complete. The output is not cropped yet.")

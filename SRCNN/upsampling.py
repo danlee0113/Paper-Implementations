@@ -21,7 +21,7 @@ for i in range(1,92) :
     if lr_image is None :
         print("Could not read image!\n")
         continue
-    h,w = lr_image.shape # shape의 순서가 h,w임.
+    h,w = lr_image.shape # shape의 순서가 h,w임. 
     hr_image = cv2.resize(lr_image, (w * 3, h * 3), interpolation = cv2.INTER_CUBIC) # bicubic interpolation은 w,h 순서임.
     print(f"Original shape : {lr_image.shape} , Upsampled shape : {hr_image.shape}\n")
     save_path = hr_dir / f"image{i}.png"
