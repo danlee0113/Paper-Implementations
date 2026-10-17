@@ -25,6 +25,18 @@ We use two types of datasets in this implementation.
 
 """
 
+# Hyperparameters
+epochs = 
+learning_rate =
+batch_size = 
+
+# device 
+# Device
+device = torch.device(
+    "cuda" if torch.cuda.is_available() else "cpu"
+)
+
+
 yi_dir = Path(os.getenv("CROP_PATH"))  # Y_i in the paper. (bicubic upsampled version, so size : 33x33)
 xi_dir = Path(os.getenv("GT_PATCH_PATH")) # X_i in the paper. Ground truth patches. (also size : 33x33)
 
