@@ -45,7 +45,8 @@ class SRCNNDataset(Dataset):
 
     def __getitem__(self, idx):
         lr_path = self.lr_paths[idx] # dataset의 특정 데이터 가져오기
-        hr_path = self.hr_dir / lr_path.name
+        hr_name = lr_path.name.replace("_patch", "_gt_patch")
+        hr_path = self.hr_dir / hr_name
 
 
         # Load images

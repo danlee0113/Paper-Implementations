@@ -1,22 +1,233 @@
-from PIL import Image
+
 from pathlib import Path
+import cv2
+import numpy as np
+import torch
 from dotenv import load_dotenv
 import os
 
-import cv2
+import wandb
+
+from skimage.metrics import (
+    peak_signal_noise_ratio,
+    structural_similarity
+)
+
+from model import SRCNN
+
 
 load_dotenv()
 
-hr_dir = Path(os.getenv("HR_PATH"))
-y_dir = Path(os.getenv("Y_PATH")) # 원본 Y 
-for i in range(1,92) : 
-    hr_path = hr_dir / f"image{i}.png"
-    y_path = y_dir/ f"image_{i}.png"
-    y_image = cv2.imread(str(y_path), cv2.IMREAD_UNCHANGED) # 채널 하나로 하기 위해 
-    hr_image = cv2.imread(str(hr_path), cv2.IMREAD_UNCHANGED)
-    h,w = y_image.shape
-    h = (h // 3) * 3
-    w = (w // 3) * 3
-    y_image = y_image[:h,:w]
-    print(f"Ground Truth Y : {y_image.shape}, Upsampled Y : {hr_image.shape}")
-    assert y_image.shape == hr_image.shape, f"Shape mismatch: {y_image.shape} != {hr_image.shape}"
+SCALE = 3
+SET5_DIR = Path(os.getenv("SET5_PATH"))
+CHECKPOINT = Path("srcnn.pth")
+
+
+def to_image(tensor):
+    """Convert normalized tensor to uint8 image."""
+    return (
+        tensor.detach()
+        .clamp(0, 1)
+        .squeeze()
+        .cpu()
+        .numpy() * 255
+    ).astype(np.uint8)
+
+
+def main():
+    wandb.init(
+        project="SRCNN",
+        name="srcnn-baseline-set5",
+        job_type="evaluation",
+        config={
+            "model": "SRCNN",
+            "dataset": "Set5",
+            "scale_factor": SCALE
+        }
+    )
+
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() else "cpu"
+    )
+
+    # Load trained model
+    model = SRCNN().to(device)
+    model.load_state_dict(
+        torch.load(
+            CHECKPOINT,
+            map_location=device,
+            weights_only=True
+        )
+    )
+    model.eval()
+
+    psnr_scores = []
+    ssim_scores = []
+
+    bicubic_psnr_scores = []
+    bicubic_ssim_scores = []
+
+    image_paths = sorted(SET5_DIR.glob("*.png"))
+
+    if not image_paths:
+        raise ValueError("No PNG images found in Set5 directory")
+
+    # Store image comparison results
+    comparison_images = []
+
+    for image_path in image_paths:
+
+        # Load HR image
+        image = cv2.imread(str(image_path))
+        if image is None:
+            raise FileNotFoundError(image_path)
+
+        # BGR -> YCrCb -> Y
+        y = cv2.cvtColor(
+            image, cv2.COLOR_BGR2YCrCb
+        )[:, :, 0]
+
+        # Make dimensions divisible by SCALE
+        h, w = y.shape
+        h = (h // SCALE) * SCALE
+        w = (w // SCALE) * SCALE
+        hr = y[:h, :w]
+
+        # Same degradation as training
+        blurred = cv2.GaussianBlur(
+            hr, (5, 5), sigmaX=1.0
+        )
+
+        lr_small = blurred[::SCALE, ::SCALE]
+
+        lr = cv2.resize(
+            lr_small,
+            (w, h),
+            interpolation=cv2.INTER_CUBIC
+        )
+
+        # Convert to tensor
+        lr_tensor = torch.from_numpy(
+            lr.astype(np.float32) / 255.0
+        )[None, None].to(device)
+
+        hr_tensor = torch.from_numpy(
+            hr.astype(np.float32) / 255.0
+        )[None, None].to(device)
+
+        # SRCNN inference
+        with torch.no_grad():
+            sr_tensor = model(lr_tensor)
+
+        # Crop HR and Bicubic to match SRCNN output
+        # 33x33 -> 21x21
+        bicubic_tensor = lr_tensor[:, :, 6:-6, 6:-6]
+        hr_crop = hr_tensor[:, :, 6:-6, 6:-6]
+
+        # Convert to NumPy
+        sr_np = sr_tensor.squeeze().cpu().numpy()
+        bicubic_np = bicubic_tensor.squeeze().cpu().numpy()
+        hr_np = hr_crop.squeeze().cpu().numpy()
+
+        # SRCNN evaluation
+        psnr = peak_signal_noise_ratio(
+            hr_np, sr_np, data_range=1.0
+        )
+
+        ssim = structural_similarity(
+            hr_np, sr_np, data_range=1.0
+        )
+
+        psnr_scores.append(psnr)
+        ssim_scores.append(ssim)
+
+        # Bicubic evaluation
+        bicubic_psnr = peak_signal_noise_ratio(
+            hr_np, bicubic_np, data_range=1.0
+        )
+
+        bicubic_ssim = structural_similarity(
+            hr_np, bicubic_np, data_range=1.0
+        )
+
+        bicubic_psnr_scores.append(bicubic_psnr)
+        bicubic_ssim_scores.append(bicubic_ssim)
+
+        print(
+            f"{image_path.name}: "
+            f"SRCNN PSNR={psnr:.2f}, "
+            f"Bicubic PSNR={bicubic_psnr:.2f}"
+        )
+
+        # Log metrics for each image
+        wandb.log({
+            f"Set5/{image_path.stem}/srcnn_psnr": psnr,
+            f"Set5/{image_path.stem}/srcnn_ssim": ssim,
+            f"Set5/{image_path.stem}/bicubic_psnr": bicubic_psnr,
+            f"Set5/{image_path.stem}/bicubic_ssim": bicubic_ssim
+        })
+
+        # Prepare visualization
+        comparison = np.concatenate(
+            [
+                to_image(bicubic_tensor),
+                to_image(sr_tensor),
+                to_image(hr_crop)
+            ],
+            axis=1
+        )
+
+        comparison_images.append(
+            wandb.Image(
+                comparison,
+                caption=(
+                    f"{image_path.stem} | "
+                    f"Left: Bicubic | "
+                    f"Middle: SRCNN | "
+                    f"Right: HR | "
+                    f"PSNR: {psnr:.2f} dB"
+                )
+            )
+        )
+
+    # Calculate average metrics
+    avg_psnr = np.mean(psnr_scores)
+    avg_ssim = np.mean(ssim_scores)
+
+    avg_bicubic_psnr = np.mean(bicubic_psnr_scores)
+    avg_bicubic_ssim = np.mean(bicubic_ssim_scores)
+
+    psnr_improvement = avg_psnr - avg_bicubic_psnr
+
+    print("\n===== Set5 Results =====")
+
+    print(
+        f"SRCNN - PSNR: {avg_psnr:.2f} dB, "
+        f"SSIM: {avg_ssim:.4f}"
+    )
+
+    print(
+        f"Bicubic - PSNR: {avg_bicubic_psnr:.2f} dB, "
+        f"SSIM: {avg_bicubic_ssim:.4f}"
+    )
+
+    print(
+        f"PSNR Improvement: "
+        f"{psnr_improvement:+.2f} dB"
+    )
+
+    # Log average metrics and images
+    wandb.log({
+        "Set5/average/srcnn_psnr": avg_psnr,
+        "Set5/average/srcnn_ssim": avg_ssim,
+        "Set5/average/bicubic_psnr": avg_bicubic_psnr,
+        "Set5/average/bicubic_ssim": avg_bicubic_ssim,
+        "Set5/average/psnr_improvement": psnr_improvement,
+        "Set5/comparison_images": comparison_images
+    })
+
+    wandb.finish()
+
+
+if __name__ == "__main__":
+    main()
