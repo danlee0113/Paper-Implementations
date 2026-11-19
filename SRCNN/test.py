@@ -20,8 +20,10 @@ load_dotenv()
 
 SCALE = 3
 SET5_DIR = Path(os.getenv("SET5_PATH"))
-CHECKPOINT = Path("srcnn.pth")
-
+SET14_DIR = Path(os.getenv("SET14_PATH"))
+CHECKPOINT = Path("srcnn_v1.pth")
+BLUR_SIGMA = 1.0
+BLUR_KSIZE = (5, 5)
 
 def to_image(tensor):
     """Convert normalized tensor to uint8 image."""
@@ -37,11 +39,11 @@ def to_image(tensor):
 def main():
     wandb.init(
         project="SRCNN",
-        name="srcnn-baseline-set5",
+        name="srcnn-baseline-v1-Set14",
         job_type="evaluation",
         config={
             "model": "SRCNN",
-            "dataset": "Set5",
+            "dataset": "Set14",
             "scale_factor": SCALE
         }
     )
@@ -67,7 +69,7 @@ def main():
     bicubic_psnr_scores = []
     bicubic_ssim_scores = []
 
-    image_paths = sorted(SET5_DIR.glob("*.png"))
+    image_paths = sorted(SET14_DIR.glob("*.png"))
 
     if not image_paths:
         raise ValueError("No PNG images found in Set5 directory")
@@ -95,7 +97,7 @@ def main():
 
         # Same degradation as training
         blurred = cv2.GaussianBlur(
-            hr, (5, 5), sigmaX=1.0
+            hr, BLUR_KSIZE, sigmaX=BLUR_SIGMA
         )
 
         lr_small = blurred[::SCALE, ::SCALE]
@@ -161,10 +163,10 @@ def main():
 
         # Log metrics for each image
         wandb.log({
-            f"Set5/{image_path.stem}/srcnn_psnr": psnr,
-            f"Set5/{image_path.stem}/srcnn_ssim": ssim,
-            f"Set5/{image_path.stem}/bicubic_psnr": bicubic_psnr,
-            f"Set5/{image_path.stem}/bicubic_ssim": bicubic_ssim
+            f"Set14/{image_path.stem}/srcnn_psnr": psnr,
+            f"Set14/{image_path.stem}/srcnn_ssim": ssim,
+            f"Set14/{image_path.stem}/bicubic_psnr": bicubic_psnr,
+            f"Set14/{image_path.stem}/bicubic_ssim": bicubic_ssim
         })
 
         # Prepare visualization
@@ -199,7 +201,7 @@ def main():
 
     psnr_improvement = avg_psnr - avg_bicubic_psnr
 
-    print("\n===== Set5 Results =====")
+    print("\n===== Set14 Results =====")
 
     print(
         f"SRCNN - PSNR: {avg_psnr:.2f} dB, "
@@ -218,12 +220,12 @@ def main():
 
     # Log average metrics and images
     wandb.log({
-        "Set5/average/srcnn_psnr": avg_psnr,
-        "Set5/average/srcnn_ssim": avg_ssim,
-        "Set5/average/bicubic_psnr": avg_bicubic_psnr,
-        "Set5/average/bicubic_ssim": avg_bicubic_ssim,
-        "Set5/average/psnr_improvement": psnr_improvement,
-        "Set5/comparison_images": comparison_images
+        "Set14/average/srcnn_psnr": avg_psnr,
+        "Set14/average/srcnn_ssim": avg_ssim,
+        "Set14/average/bicubic_psnr": avg_bicubic_psnr,
+        "Set14/average/bicubic_ssim": avg_bicubic_ssim,
+        "Set14/average/psnr_improvement": psnr_improvement,
+        "Set14/comparison_images": comparison_images
     })
 
     wandb.finish()

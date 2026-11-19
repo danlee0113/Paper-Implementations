@@ -27,23 +27,26 @@ We use two types of datasets in this implementation.
 
 
 """
-EXPERIMENT_NAME = 'srcnn-baseline'
+EXPERIMENT_NAME = 'srcnn-baseline-v1'
 
 # Hyperparameters
-epochs = 100
-batch_size = 128
-learning_rate = 1e-4
+EPOCHS = 100
+BATCH_SIZE = 128
+LR_12 = 1e-4 # learning rate of layer 1,2 
+LR_3 = 1e-5 # learning rate of layer 3
+SCALE = 3
 
 # wandb initialization
 wandb.init(
     project="SRCNN",
     name=EXPERIMENT_NAME,
     config={
-        "epochs": epochs,
-        "batch_size": batch_size,
-        "learning_rate": learning_rate,
-        "optimizer": "Adam",
-        "scale_factor": 3
+        "epochs": EPOCHS,
+        "batch_size": BATCH_SIZE,
+        "learning_rate_12": LR_12,
+        "learning_rate_3": LR_3,
+        "optimizer": "SGD",
+        "scale_factor": SCALE
     }
 )
 
@@ -63,7 +66,7 @@ device = torch.device(
 train_dataset = SRCNNDataset(yi_dir, xi_dir)
 train_loader = DataLoader(
     train_dataset,
-    batch_size = batch_size, 
+    batch_size = BATCH_SIZE, 
     shuffle = True,
     num_workers = 4
 )
@@ -71,12 +74,14 @@ train_loader = DataLoader(
 model = SRCNN().to(device)
 
 criterion = nn.MSELoss()
-optimizer = torch.optim.Adam(
-    model.parameters(),
-    lr =learning_rate
+optimizer = torch.optim.SGD([
+    {"params": model.conv1.parameters()},                # lr을 안 적으면 아래 기본값 사용
+    {"params": model.conv2.parameters()},
+    {"params": model.conv3.parameters(), "lr": LR_3},    # 이 그룹만 따로 지정
+], lr=LR_12, momentum =0.9
 )
 
-for epoch in range(epochs):
+for epoch in range(EPOCHS):
     model.train()
     running_loss = 0
 
@@ -107,8 +112,8 @@ for epoch in range(epochs):
 
 
     print(
-        f"Epoch [{epoch+1}/{epochs}], "
+        f"Epoch [{epoch+1}/{EPOCHS}], "
         f"Loss: {avg_loss:.6f}"
     )
-torch.save(model.state_dict(), "srcnn.pth")
+torch.save(model.state_dict(), "srcnn_v1.pth")
 wandb.finish()
