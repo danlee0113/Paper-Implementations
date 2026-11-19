@@ -15,3 +15,5 @@ wandb/
 *.pth
 
 Author's code/
+
+Evaluation_Dataset/

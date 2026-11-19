@@ -28,7 +28,15 @@ class SRCNN(nn.Module):
         self.conv3 = nn.Conv2d(in_channels = 32, out_channels = 1, kernel_size = 5, padding = 0, stride = 1)
         self.relu = nn.ReLU()
 
-    
+        self._init_weights()   # ← 레이어 정의 다음에 호출
+
+    def _init_weights(self):
+        # 논문: weight ~ Gaussian(mean=0, std=0.001), bias = 0
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.normal_(m.weight, mean=0.0, std=0.001)
+                nn.init.zeros_(m.bias)
+
     def forward(self, x):
         x = self.relu(self.conv1(x))
         x = self.relu(self.conv2(x))
