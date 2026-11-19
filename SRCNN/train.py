@@ -27,21 +27,29 @@ We use two types of datasets in this implementation.
 
 
 """
-EXPERIMENT_NAME = 'srcnn-baseline-v1'
+EXPERIMENT_NAME = 'srcnn-baseline-v3'
 
 # Hyperparameters
-EPOCHS = 100
+MAX_EPOCHS = 1500 # early stopping이 안 걸릴 때의 상한
 BATCH_SIZE = 128
-LR_12 = 1e-4 # learning rate of layer 1,2 
+LR_12 = 1e-4 # learning rate of layer 1,2
 LR_3 = 1e-5 # learning rate of layer 3
 SCALE = 3
+
+# Early stopping
+PATIENCE = 50     # 이 epoch 수 동안 개선이 없으면 종료
+MIN_DELTA = 1e-4  # best 대비 상대 개선율 (0.01% ≈ 0.0004 dB)
+BEST_CKPT = "srcnn_v3_best.pth"
+LAST_CKPT = "srcnn_v3_last.pth"
 
 # wandb initialization
 wandb.init(
     project="SRCNN",
     name=EXPERIMENT_NAME,
     config={
-        "epochs": EPOCHS,
+        "max_epochs": MAX_EPOCHS,
+        "patience": PATIENCE,
+        "min_delta": MIN_DELTA,
         "batch_size": BATCH_SIZE,
         "learning_rate_12": LR_12,
         "learning_rate_3": LR_3,
@@ -81,7 +89,11 @@ optimizer = torch.optim.SGD([
 ], lr=LR_12, momentum =0.9
 )
 
-for epoch in range(EPOCHS):
+best_loss = float("inf")
+best_epoch = 0
+epochs_no_improve = 0
+
+for epoch in range(MAX_EPOCHS):
     model.train()
     running_loss = 0
 
@@ -105,15 +117,38 @@ for epoch in range(EPOCHS):
         running_loss += loss.item()
 
     avg_loss = running_loss / len(train_loader)
+
+    # Early stopping: best 대비 MIN_DELTA(상대값) 이상 줄었을 때만 개선으로 인정
+    if avg_loss < best_loss * (1 - MIN_DELTA):
+        best_loss = avg_loss
+        best_epoch = epoch + 1
+        epochs_no_improve = 0
+        torch.save(model.state_dict(), BEST_CKPT)
+    else:
+        epochs_no_improve += 1
+
     wandb.log({
         "train/loss": avg_loss,
+        "train/best_loss": best_loss,
+        "train/epochs_no_improve": epochs_no_improve,
         "train/epoch": epoch + 1,
     })
 
 
     print(
-        f"Epoch [{epoch+1}/{EPOCHS}], "
-        f"Loss: {avg_loss:.6f}"
+        f"Epoch [{epoch+1}/{MAX_EPOCHS}], "
+        f"Loss: {avg_loss:.6f}, "
+        f"Best: {best_loss:.6f} (epoch {best_epoch}), "
+        f"No improve: {epochs_no_improve}/{PATIENCE}"
     )
-torch.save(model.state_dict(), "srcnn_v1.pth")
+
+    if epochs_no_improve >= PATIENCE:
+        print(f"Early stopping at epoch {epoch+1}")
+        break
+
+torch.save(model.state_dict(), LAST_CKPT)
+
+wandb.run.summary["best_loss"] = best_loss
+wandb.run.summary["best_epoch"] = best_epoch
+wandb.run.summary["stopped_epoch"] = epoch + 1
 wandb.finish()

@@ -21,7 +21,7 @@ load_dotenv()
 SCALE = 3
 SET5_DIR = Path(os.getenv("SET5_PATH"))
 SET14_DIR = Path(os.getenv("SET14_PATH"))
-CHECKPOINT = Path("srcnn_v1.pth")
+CHECKPOINT = Path("srcnn_v2.pth")
 BLUR_SIGMA = 1.0
 BLUR_KSIZE = (5, 5)
 
@@ -39,7 +39,7 @@ def to_image(tensor):
 def main():
     wandb.init(
         project="SRCNN",
-        name="srcnn-baseline-v1-Set14",
+        name="srcnn-baseline-v2-Set14",
         job_type="evaluation",
         config={
             "model": "SRCNN",
