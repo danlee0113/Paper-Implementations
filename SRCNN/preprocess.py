@@ -52,8 +52,14 @@ def gaussian_blur(image: np.ndarray) -> np.ndarray:
 
 
 def downsample(image: np.ndarray, scale: int = SCALE) -> np.ndarray:
-    """factor 1/scale subsampling."""
-    return image[::scale, ::scale]
+    """factor 1/scale subsampling.
+
+    각 scale x scale 블록의 중앙 픽셀(offset = scale // 2)을 샘플링.
+    cv2.resize는 LR 픽셀 i를 HR 좌표 scale*i + (scale-1)/2 (블록 중앙)에 있다고 보고
+    업샘플링하므로, [::scale]로 블록 왼쪽 끝을 뽑으면 결과가 1px 밀림.
+    """
+    offset = scale // 2
+    return image[offset::scale, offset::scale]
 
 
 def upsample(image: np.ndarray, scale: int = SCALE) -> np.ndarray:

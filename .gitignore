@@ -17,3 +17,9 @@ wandb/
 Author's code/
 
 Evaluation_Dataset/
+
+train_v4.log
+train_v5.log
+train_v6.log
+
+bicubic.py

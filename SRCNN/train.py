@@ -27,10 +27,10 @@ We use two types of datasets in this implementation.
 
 
 """
-EXPERIMENT_NAME = 'srcnn-baseline-v3'
+EXPERIMENT_NAME = 'srcnn-baseline-v6'
 
 # Hyperparameters
-MAX_EPOCHS = 1500 # early stopping이 안 걸릴 때의 상한
+MAX_EPOCHS = 3000 # early stopping이 안 걸릴 때의 상한
 BATCH_SIZE = 128
 LR_12 = 1e-4 # learning rate of layer 1,2
 LR_3 = 1e-5 # learning rate of layer 3
@@ -39,8 +39,8 @@ SCALE = 3
 # Early stopping
 PATIENCE = 50     # 이 epoch 수 동안 개선이 없으면 종료
 MIN_DELTA = 1e-4  # best 대비 상대 개선율 (0.01% ≈ 0.0004 dB)
-BEST_CKPT = "srcnn_v3_best.pth"
-LAST_CKPT = "srcnn_v3_last.pth"
+BEST_CKPT = "srcnn_v6_best.pth"
+LAST_CKPT = "srcnn_v6_last.pth"
 
 # wandb initialization
 wandb.init(
@@ -54,6 +54,7 @@ wandb.init(
         "learning_rate_12": LR_12,
         "learning_rate_3": LR_3,
         "optimizer": "SGD",
+        "loss": "sum over pixels / batch (paper eq.2)",
         "scale_factor": SCALE
     }
 )
@@ -81,7 +82,10 @@ train_loader = DataLoader(
 
 model = SRCNN().to(device)
 
-criterion = nn.MSELoss()
+# 논문 식 (2): L = 1/n * sum_i ||F(Y_i) - X_i||^2
+#   ||.||^2 는 patch 내 모든 픽셀의 제곱 오차 '합' -> 픽셀 수로는 나누지 않고 batch 크기로만 나눔.
+#   (nn.MSELoss() 기본값(mean)은 21x21=441 픽셀로도 나눠서 gradient가 논문보다 441배 작아짐)
+criterion = nn.MSELoss(reduction="sum")
 optimizer = torch.optim.SGD([
     {"params": model.conv1.parameters()},                # lr을 안 적으면 아래 기본값 사용
     {"params": model.conv2.parameters()},
@@ -106,7 +110,7 @@ for epoch in range(MAX_EPOCHS):
 
         # Crop HR: 33x33 -> 21x21
         hr = hr[:, :, 6:-6, 6:-6]
-        loss = criterion(sr, hr)
+        loss = criterion(sr, hr) / sr.size(0)  # patch별 픽셀 합 -> batch 평균
 
         # backward pass
         optimizer.zero_grad() # 이전의 gradient 초기화

@@ -21,7 +21,7 @@ load_dotenv()
 SCALE = 3
 SET5_DIR = Path(os.getenv("SET5_PATH"))
 SET14_DIR = Path(os.getenv("SET14_PATH"))
-CHECKPOINT = Path("srcnn_v2.pth")
+CHECKPOINT = Path("srcnn_v5_best.pth")
 BLUR_SIGMA = 1.0
 BLUR_KSIZE = (5, 5)
 
@@ -39,7 +39,7 @@ def to_image(tensor):
 def main():
     wandb.init(
         project="SRCNN",
-        name="srcnn-baseline-v2-Set14",
+        name="srcnn-baseline-v5-Set14",
         job_type="evaluation",
         config={
             "model": "SRCNN",
@@ -100,7 +100,9 @@ def main():
             hr, BLUR_KSIZE, sigmaX=BLUR_SIGMA
         )
 
-        lr_small = blurred[::SCALE, ::SCALE]
+        # 블록 중앙 픽셀 샘플링 (cv2.resize 좌표 기준과 맞춤, preprocess.downsample과 동일)
+        offset = SCALE // 2
+        lr_small = blurred[offset::SCALE, offset::SCALE]
 
         lr = cv2.resize(
             lr_small,
