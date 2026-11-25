@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from dotenv import load_dotenv
 import os
+import argparse
 
 import wandb
 
@@ -18,12 +19,25 @@ from model import SRCNN
 
 load_dotenv()
 
-SCALE = 3
-SET5_DIR = Path(os.getenv("SET5_PATH"))
-SET14_DIR = Path(os.getenv("SET14_PATH"))
-CHECKPOINT = Path("srcnn_v5_best.pth")
-BLUR_SIGMA = 1.0
-BLUR_KSIZE = (5, 5)
+# 데이터셋 이름 -> .env 경로 변수
+DATASET_ENV = {
+    "Set5": "SET5_PATH",
+    "Set14": "SET14_PATH",
+}
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="SRCNN evaluation")
+    parser.add_argument("--checkpoint", type=str, default="srcnn_v6_best.pth", help="평가할 모델 checkpoint 경로")
+    parser.add_argument("--dataset", type=str, default="Set5", choices=list(DATASET_ENV), help="평가 데이터셋 (경로는 .env에서 읽음)")
+    parser.add_argument("--scale", type=int, default=3)
+    parser.add_argument("--blur-sigma", type=float, default=1.0, help="Gaussian blur sigma (학습 때와 동일해야 함)")
+    parser.add_argument("--blur-ksize", type=int, default=5, help="Gaussian blur kernel size (홀수)")
+    parser.add_argument("--exp-name", type=str, default=None, help="wandb run name (미지정 시 '{checkpoint 이름}-{dataset}')")
+    parser.add_argument("--wandb-project", type=str, default="SRCNN")
+    parser.add_argument("--no-wandb", action="store_true", help="wandb 로깅 끄기")
+    return parser.parse_args()
+
 
 def to_image(tensor):
     """Convert normalized tensor to uint8 image."""
@@ -37,14 +51,28 @@ def to_image(tensor):
 
 
 def main():
+    args = parse_args()
+
+    scale = args.scale
+    dataset = args.dataset
+    checkpoint = Path(args.checkpoint)
+    blur_ksize = (args.blur_ksize, args.blur_ksize)
+
+    env_key = DATASET_ENV[dataset]
+    if os.getenv(env_key) is None:
+        raise ValueError(f"{env_key} is not set in .env")
+    data_dir = Path(os.getenv(env_key))
+
+    run_name = args.exp_name or f"{checkpoint.stem}-{dataset}"
+
     wandb.init(
-        project="SRCNN",
-        name="srcnn-baseline-v5-Set14",
+        project=args.wandb_project,
+        name=run_name,
         job_type="evaluation",
+        mode="disabled" if args.no_wandb else "online",
         config={
+            **vars(args),
             "model": "SRCNN",
-            "dataset": "Set14",
-            "scale_factor": SCALE
         }
     )
 
@@ -56,7 +84,7 @@ def main():
     model = SRCNN().to(device)
     model.load_state_dict(
         torch.load(
-            CHECKPOINT,
+            checkpoint,
             map_location=device,
             weights_only=True
         )
@@ -69,10 +97,10 @@ def main():
     bicubic_psnr_scores = []
     bicubic_ssim_scores = []
 
-    image_paths = sorted(SET14_DIR.glob("*.png"))
+    image_paths = sorted(data_dir.glob("*.png"))
 
     if not image_paths:
-        raise ValueError("No PNG images found in Set5 directory")
+        raise ValueError(f"No PNG images found in {dataset} directory: {data_dir}")
 
     # Store image comparison results
     comparison_images = []
@@ -89,20 +117,20 @@ def main():
             image, cv2.COLOR_BGR2YCrCb
         )[:, :, 0]
 
-        # Make dimensions divisible by SCALE
+        # Make dimensions divisible by scale
         h, w = y.shape
-        h = (h // SCALE) * SCALE
-        w = (w // SCALE) * SCALE
+        h = (h // scale) * scale
+        w = (w // scale) * scale
         hr = y[:h, :w]
 
         # Same degradation as training
         blurred = cv2.GaussianBlur(
-            hr, BLUR_KSIZE, sigmaX=BLUR_SIGMA
+            hr, blur_ksize, sigmaX=args.blur_sigma
         )
 
         # 블록 중앙 픽셀 샘플링 (cv2.resize 좌표 기준과 맞춤, preprocess.downsample과 동일)
-        offset = SCALE // 2
-        lr_small = blurred[offset::SCALE, offset::SCALE]
+        offset = scale // 2
+        lr_small = blurred[offset::scale, offset::scale]
 
         lr = cv2.resize(
             lr_small,
@@ -165,10 +193,10 @@ def main():
 
         # Log metrics for each image
         wandb.log({
-            f"Set14/{image_path.stem}/srcnn_psnr": psnr,
-            f"Set14/{image_path.stem}/srcnn_ssim": ssim,
-            f"Set14/{image_path.stem}/bicubic_psnr": bicubic_psnr,
-            f"Set14/{image_path.stem}/bicubic_ssim": bicubic_ssim
+            f"{dataset}/{image_path.stem}/srcnn_psnr": psnr,
+            f"{dataset}/{image_path.stem}/srcnn_ssim": ssim,
+            f"{dataset}/{image_path.stem}/bicubic_psnr": bicubic_psnr,
+            f"{dataset}/{image_path.stem}/bicubic_ssim": bicubic_ssim
         })
 
         # Prepare visualization
@@ -203,7 +231,7 @@ def main():
 
     psnr_improvement = avg_psnr - avg_bicubic_psnr
 
-    print("\n===== Set14 Results =====")
+    print(f"\n===== {dataset} Results =====")
 
     print(
         f"SRCNN - PSNR: {avg_psnr:.2f} dB, "
@@ -222,12 +250,12 @@ def main():
 
     # Log average metrics and images
     wandb.log({
-        "Set14/average/srcnn_psnr": avg_psnr,
-        "Set14/average/srcnn_ssim": avg_ssim,
-        "Set14/average/bicubic_psnr": avg_bicubic_psnr,
-        "Set14/average/bicubic_ssim": avg_bicubic_ssim,
-        "Set14/average/psnr_improvement": psnr_improvement,
-        "Set14/comparison_images": comparison_images
+        f"{dataset}/average/srcnn_psnr": avg_psnr,
+        f"{dataset}/average/srcnn_ssim": avg_ssim,
+        f"{dataset}/average/bicubic_psnr": avg_bicubic_psnr,
+        f"{dataset}/average/bicubic_ssim": avg_bicubic_ssim,
+        f"{dataset}/average/psnr_improvement": psnr_improvement,
+        f"{dataset}/comparison_images": comparison_images
     })
 
     wandb.finish()

@@ -2,6 +2,10 @@ from PIL import Image
 from pathlib import Path
 from dotenv import load_dotenv
 import os
+import argparse
+import random
+
+import numpy as np
 
 import cv2
 
@@ -27,35 +31,52 @@ We use two types of datasets in this implementation.
 
 
 """
-EXPERIMENT_NAME = 'srcnn-baseline-v6'
+def parse_args():
+    parser = argparse.ArgumentParser(description="SRCNN training")
+    # Experiment
+    parser.add_argument("--exp-name", type=str, default="srcnn-baseline-v6", help="wandb run name, checkpoint 파일명 prefix")
+    parser.add_argument("--seed", type=int, default=None, help="random seed (미지정 시 고정하지 않음)")
+    # Hyperparameters
+    parser.add_argument("--max-epochs", type=int, default=3000, help="early stopping이 안 걸릴 때의 상한")
+    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--lr-12", type=float, default=1e-4, help="learning rate of layer 1,2")
+    parser.add_argument("--lr-3", type=float, default=1e-5, help="learning rate of layer 3")
+    parser.add_argument("--momentum", type=float, default=0.9)
+    parser.add_argument("--scale", type=int, default=3)
+    parser.add_argument("--num-workers", type=int, default=4)
+    # Early stopping
+    parser.add_argument("--patience", type=int, default=50, help="이 epoch 수 동안 개선이 없으면 종료")
+    parser.add_argument("--min-delta", type=float, default=1e-4, help="best 대비 상대 개선율 (0.01%% ≈ 0.0004 dB)")
+    # Checkpoint
+    parser.add_argument("--ckpt-dir", type=str, default=".", help="checkpoint 저장 디렉토리")
+    # wandb
+    parser.add_argument("--wandb-project", type=str, default="SRCNN")
+    parser.add_argument("--no-wandb", action="store_true", help="wandb 로깅 끄기")
+    return parser.parse_args()
 
-# Hyperparameters
-MAX_EPOCHS = 3000 # early stopping이 안 걸릴 때의 상한
-BATCH_SIZE = 128
-LR_12 = 1e-4 # learning rate of layer 1,2
-LR_3 = 1e-5 # learning rate of layer 3
-SCALE = 3
 
-# Early stopping
-PATIENCE = 50     # 이 epoch 수 동안 개선이 없으면 종료
-MIN_DELTA = 1e-4  # best 대비 상대 개선율 (0.01% ≈ 0.0004 dB)
-BEST_CKPT = "srcnn_v6_best.pth"
-LAST_CKPT = "srcnn_v6_last.pth"
+args = parse_args()
+
+if args.seed is not None:
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+
+ckpt_dir = Path(args.ckpt_dir)
+ckpt_dir.mkdir(parents=True, exist_ok=True)
+BEST_CKPT = ckpt_dir / f"{args.exp_name}_best.pth"
+LAST_CKPT = ckpt_dir / f"{args.exp_name}_last.pth"
 
 # wandb initialization
 wandb.init(
-    project="SRCNN",
-    name=EXPERIMENT_NAME,
+    project=args.wandb_project,
+    name=args.exp_name,
+    mode="disabled" if args.no_wandb else "online",
     config={
-        "max_epochs": MAX_EPOCHS,
-        "patience": PATIENCE,
-        "min_delta": MIN_DELTA,
-        "batch_size": BATCH_SIZE,
-        "learning_rate_12": LR_12,
-        "learning_rate_3": LR_3,
+        **vars(args),
         "optimizer": "SGD",
         "loss": "sum over pixels / batch (paper eq.2)",
-        "scale_factor": SCALE
     }
 )
 
@@ -75,9 +96,9 @@ device = torch.device(
 train_dataset = SRCNNDataset(yi_dir, xi_dir)
 train_loader = DataLoader(
     train_dataset,
-    batch_size = BATCH_SIZE, 
+    batch_size = args.batch_size, 
     shuffle = True,
-    num_workers = 4
+    num_workers = args.num_workers
 )
 
 model = SRCNN().to(device)
@@ -89,15 +110,15 @@ criterion = nn.MSELoss(reduction="sum")
 optimizer = torch.optim.SGD([
     {"params": model.conv1.parameters()},                # lr을 안 적으면 아래 기본값 사용
     {"params": model.conv2.parameters()},
-    {"params": model.conv3.parameters(), "lr": LR_3},    # 이 그룹만 따로 지정
-], lr=LR_12, momentum =0.9
+    {"params": model.conv3.parameters(), "lr": args.lr_3},    # 이 그룹만 따로 지정
+], lr=args.lr_12, momentum=args.momentum
 )
 
 best_loss = float("inf")
 best_epoch = 0
 epochs_no_improve = 0
 
-for epoch in range(MAX_EPOCHS):
+for epoch in range(args.max_epochs):
     model.train()
     running_loss = 0
 
@@ -123,7 +144,7 @@ for epoch in range(MAX_EPOCHS):
     avg_loss = running_loss / len(train_loader)
 
     # Early stopping: best 대비 MIN_DELTA(상대값) 이상 줄었을 때만 개선으로 인정
-    if avg_loss < best_loss * (1 - MIN_DELTA):
+    if avg_loss < best_loss * (1 - args.min_delta):
         best_loss = avg_loss
         best_epoch = epoch + 1
         epochs_no_improve = 0
@@ -140,13 +161,13 @@ for epoch in range(MAX_EPOCHS):
 
 
     print(
-        f"Epoch [{epoch+1}/{MAX_EPOCHS}], "
+        f"Epoch [{epoch+1}/{args.max_epochs}], "
         f"Loss: {avg_loss:.6f}, "
         f"Best: {best_loss:.6f} (epoch {best_epoch}), "
-        f"No improve: {epochs_no_improve}/{PATIENCE}"
+        f"No improve: {epochs_no_improve}/{args.patience}"
     )
 
-    if epochs_no_improve >= PATIENCE:
+    if epochs_no_improve >= args.patience:
         print(f"Early stopping at epoch {epoch+1}")
         break
 
